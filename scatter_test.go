@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestRun(t *testing.T) {
+func TestRunIO(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -23,7 +23,7 @@ func TestRun(t *testing.T) {
 		jobs = append(jobs, in{i})
 	}
 
-	results, errs := Run[in, out](8, jobs, func(job in) (out, error) {
+	results, errs := RunIO[in, out](8, jobs, func(job in) (out, error) {
 		return out{i: job.i, o: job.i * 2}, nil
 	})
 
@@ -42,7 +42,34 @@ func TestRun(t *testing.T) {
 	}
 }
 
-func TestRun_AllErrors(t *testing.T) {
+func TestRunI(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	out := 0
+
+	errs := RunI[in](8, jobs, func(job in) error {
+		out = job.i + 1
+		return nil
+	})
+
+	if len(errs) != 0 {
+		t.Errorf("should produce no errors, received: %d", len(errs))
+	}
+
+	if out == 0 {
+		t.Errorf("out should have been changed, received: %d", out)
+	}
+}
+
+func TestRunIO_AllErrors(t *testing.T) {
 	type in struct{}
 	type out struct{}
 
@@ -52,7 +79,7 @@ func TestRun_AllErrors(t *testing.T) {
 		jobs = append(jobs, in{})
 	}
 
-	results, errs := Run[in, out](8, jobs, func(job in) (out, error) {
+	results, errs := RunIO[in, out](8, jobs, func(job in) (out, error) {
 		return out{}, errors.New("error")
 	})
 
@@ -65,7 +92,25 @@ func TestRun_AllErrors(t *testing.T) {
 	}
 }
 
-func TestRun_HalfErrors(t *testing.T) {
+func TestRunI_AllErrors(t *testing.T) {
+	type in struct{}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{})
+	}
+
+	errs := RunI[in](8, jobs, func(job in) error {
+		return errors.New("error")
+	})
+
+	if len(errs) != 100 {
+		t.Errorf("should produce only errors, received: %d", len(errs))
+	}
+}
+
+func TestRunIO_HalfErrors(t *testing.T) {
 	type in struct{ i int }
 
 	type out struct{}
@@ -76,7 +121,7 @@ func TestRun_HalfErrors(t *testing.T) {
 		jobs = append(jobs, in{i})
 	}
 
-	results, errs := Run[in, out](8, jobs, func(job in) (out, error) {
+	results, errs := RunIO[in, out](8, jobs, func(job in) (out, error) {
 		if job.i%2 == 0 {
 			return out{}, nil
 		}
@@ -93,7 +138,29 @@ func TestRun_HalfErrors(t *testing.T) {
 	}
 }
 
-func TestRunCtx_NoDeadline(t *testing.T) {
+func TestRunI_HalfErrors(t *testing.T) {
+	type in struct{ i int }
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	errs := RunI[in](8, jobs, func(job in) error {
+		if job.i%2 == 0 {
+			return nil
+		}
+
+		return errors.New("error")
+	})
+
+	if len(errs) != 50 {
+		t.Errorf("should produce exactly 50 errors, received: %d", len(errs))
+	}
+}
+
+func TestRunIOCtx_NoDeadline(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -111,7 +178,7 @@ func TestRunCtx_NoDeadline(t *testing.T) {
 
 	ctx := context.Background()
 
-	results, errs := RunCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
+	results, errs := RunIOCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
 		return out{i: job.i, o: job.i * 2}, nil
 	})
 
@@ -130,7 +197,29 @@ func TestRunCtx_NoDeadline(t *testing.T) {
 	}
 }
 
-func TestRunCtx_WithDeadline(t *testing.T) {
+func TestRunICtx_NoDeadline(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	ctx := context.Background()
+
+	errs := RunICtx[in](ctx, 8, jobs, func(job in) error {
+		return nil
+	})
+
+	if len(errs) != 0 {
+		t.Errorf("should produce no errors, received: %d", len(errs))
+	}
+}
+
+func TestRunIOCtx_WithDeadline(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -149,7 +238,7 @@ func TestRunCtx_WithDeadline(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(200*time.Millisecond))
 	defer cancel()
 
-	_, errs := RunCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
+	_, errs := RunIOCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
 		time.Sleep(100 * time.Millisecond)
 
 		return out{i: job.i, o: job.i * 2}, nil
@@ -166,7 +255,38 @@ func TestRunCtx_WithDeadline(t *testing.T) {
 	}
 }
 
-func TestRunCtx_WithTimeout(t *testing.T) {
+func TestRunICtx_WithDeadline(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(200*time.Millisecond))
+	defer cancel()
+
+	errs := RunICtx[in](ctx, 8, jobs, func(job in) error {
+		time.Sleep(100 * time.Millisecond)
+
+		return nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("should produce some errors, received: %d", len(errs))
+	}
+
+	for _, e := range errs {
+		if !errors.Is(e.Error, context.DeadlineExceeded) {
+			t.Errorf("should be context.DeadlineExceeded error, received: %s", e.Error.Error())
+		}
+	}
+}
+
+func TestRunIOCtx_WithTimeout(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -185,7 +305,7 @@ func TestRunCtx_WithTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	_, errs := RunCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
+	_, errs := RunIOCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
 		time.Sleep(100 * time.Millisecond)
 
 		return out{i: job.i, o: job.i * 2}, nil
@@ -202,7 +322,38 @@ func TestRunCtx_WithTimeout(t *testing.T) {
 	}
 }
 
-func TestRunCtx_WithCancel(t *testing.T) {
+func TestRunICtx_WithTimeout(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	errs := RunICtx[in](ctx, 8, jobs, func(job in) error {
+		time.Sleep(100 * time.Millisecond)
+
+		return nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("should produce some errors, received: %d", len(errs))
+	}
+
+	for _, e := range errs {
+		if !errors.Is(e.Error, context.DeadlineExceeded) {
+			t.Errorf("should be context.DeadlineExceeded error, received: %s", e.Error.Error())
+		}
+	}
+}
+
+func TestRunIOCtx_WithCancel(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -225,7 +376,7 @@ func TestRunCtx_WithCancel(t *testing.T) {
 		cancel()
 	}()
 
-	_, errs := RunCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
+	_, errs := RunIOCtx[in, out](ctx, 8, jobs, func(job in) (out, error) {
 		time.Sleep(100 * time.Millisecond)
 
 		return out{i: job.i, o: job.i * 2}, nil
@@ -242,7 +393,42 @@ func TestRunCtx_WithCancel(t *testing.T) {
 	}
 }
 
-func TestRun_WithDeadline(t *testing.T) {
+func TestRunICtx_WithCancel(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	errs := RunICtx[in](ctx, 8, jobs, func(job in) error {
+		time.Sleep(100 * time.Millisecond)
+
+		return nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("should produce some errors, received: %d", len(errs))
+	}
+
+	for _, e := range errs {
+		if !errors.Is(e.Error, context.Canceled) {
+			t.Errorf("should be context.Canceled error, received: %s", e.Error.Error())
+		}
+	}
+}
+
+func TestRunIO_WithDeadline(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -258,7 +444,7 @@ func TestRun_WithDeadline(t *testing.T) {
 		jobs = append(jobs, in{i})
 	}
 
-	_, errs := RunWithDeadline[in, out](time.Now().Add(200*time.Millisecond), 8, jobs, func(job in) (out, error) {
+	_, errs := RunIOWithDeadline[in, out](time.Now().Add(200*time.Millisecond), 8, jobs, func(job in) (out, error) {
 		time.Sleep(100 * time.Millisecond)
 
 		return out{i: job.i, o: job.i * 2}, nil
@@ -275,7 +461,35 @@ func TestRun_WithDeadline(t *testing.T) {
 	}
 }
 
-func TestRun_WithTimeout(t *testing.T) {
+func TestRunI_WithDeadline(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	errs := RunIWithDeadline[in](time.Now().Add(200*time.Millisecond), 8, jobs, func(job in) error {
+		time.Sleep(100 * time.Millisecond)
+
+		return nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("should produce some errors, received: %d", len(errs))
+	}
+
+	for _, e := range errs {
+		if !errors.Is(e.Error, context.DeadlineExceeded) {
+			t.Errorf("should be context.DeadlineExceeded error, received: %s", e.Error.Error())
+		}
+	}
+}
+
+func TestRunIO_WithTimeout(t *testing.T) {
 	type in struct {
 		i int
 	}
@@ -291,10 +505,38 @@ func TestRun_WithTimeout(t *testing.T) {
 		jobs = append(jobs, in{i})
 	}
 
-	_, errs := RunWithTimeout[in, out](200*time.Millisecond, 8, jobs, func(job in) (out, error) {
+	_, errs := RunIOWithTimeout[in, out](200*time.Millisecond, 8, jobs, func(job in) (out, error) {
 		time.Sleep(100 * time.Millisecond)
 
 		return out{i: job.i, o: job.i * 2}, nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("should produce some errors, received: %d", len(errs))
+	}
+
+	for _, e := range errs {
+		if !errors.Is(e.Error, context.DeadlineExceeded) {
+			t.Errorf("should be context.DeadlineExceeded error, received: %s", e.Error.Error())
+		}
+	}
+}
+
+func TestRunI_WithTimeout(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 100; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	errs := RunIWithTimeout[in](200*time.Millisecond, 8, jobs, func(job in) error {
+		time.Sleep(100 * time.Millisecond)
+
+		return nil
 	})
 
 	if len(errs) == 0 {

@@ -13,39 +13,73 @@ type Error[I any] struct {
 	Error error
 }
 
-// RunFn specifies the signature for the function being passed into the pool which will get executed for each input.
-type RunFn[I any, O any] func(I) (O, error)
+// RunIOFn specifies the signature for the function being passed into the pool which will get executed for each input
+// and that produces an output.
+type RunIOFn[I any, O any] func(I) (O, error)
 
-// Run creates a specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
+// RunIFn specifies the signature for the function being passed into the pool which will get executed for each input
+// anf that produces no output.
+type RunIFn[I any] func(I) error
+
+// RunIO creates a specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
 // results and/or errors.
-func Run[I any, O any](numRoutines uint, inputs []I, fn RunFn[I, O]) (results []O, errors []Error[I]) {
-	return run(context.Background(), numRoutines, inputs, fn)
+func RunIO[I any, O any](numRoutines uint, inputs []I, fn RunIOFn[I, O]) (results []O, errors []Error[I]) {
+	return runIO(context.Background(), numRoutines, inputs, fn)
 }
 
-// RunCtx creates specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
+// RunI creates a specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
+// errors.
+func RunI[I any](numRoutines uint, inputs []I, fn RunIFn[I]) (errors []Error[I]) {
+	return runI(context.Background(), numRoutines, inputs, fn)
+}
+
+// RunIOCtx creates specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
 // results and/or errors. In addition, it takes a context which when the deadline is received, executions will stop and
 // timeout errors returned for the remaining jobs.
-func RunCtx[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn RunFn[I, O]) (results []O, errors []Error[I]) {
-	return run(ctx, numRoutines, inputs, fn)
+func RunIOCtx[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn RunIOFn[I, O]) (results []O, errors []Error[I]) {
+	return runIO(ctx, numRoutines, inputs, fn)
 }
 
-// RunWithDeadline is a helper function to run the inputs with a given deadline.
-func RunWithDeadline[I any, O any](deadline time.Time, numRoutines uint, inputs []I, fn RunFn[I, O]) (results []O, errors []Error[I]) {
+// RunICtx creates specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
+// errors. In addition, it takes a context which when the deadline is received, executions will stop and timeout errors
+// returned for the remaining jobs.
+func RunICtx[I any](ctx context.Context, numRoutines uint, inputs []I, fn RunIFn[I]) (errors []Error[I]) {
+	return runI(ctx, numRoutines, inputs, fn)
+}
+
+// RunIOWithDeadline is a helper function to run the inputs with a given deadline.
+func RunIOWithDeadline[I any, O any](deadline time.Time, numRoutines uint, inputs []I, fn RunIOFn[I, O]) (results []O, errors []Error[I]) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 
-	return run(ctx, numRoutines, inputs, fn)
+	return runIO(ctx, numRoutines, inputs, fn)
 }
 
-// RunWithTimeout is a helper function to run the inputs with a given timeout.
-func RunWithTimeout[I any, O any](timeout time.Duration, numRoutines uint, inputs []I, fn RunFn[I, O]) (results []O, errors []Error[I]) {
+// RunIWithDeadline is a helper function to run the inputs with a given deadline.
+func RunIWithDeadline[I any](deadline time.Time, numRoutines uint, inputs []I, fn RunIFn[I]) (errors []Error[I]) {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	return runI(ctx, numRoutines, inputs, fn)
+}
+
+// RunIOWithTimeout is a helper function to run the inputs with a given timeout.
+func RunIOWithTimeout[I any, O any](timeout time.Duration, numRoutines uint, inputs []I, fn RunIOFn[I, O]) (results []O, errors []Error[I]) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return run(ctx, numRoutines, inputs, fn)
+	return runIO(ctx, numRoutines, inputs, fn)
 }
 
-func run[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn RunFn[I, O]) (results []O, errors []Error[I]) {
+// RunIWithTimeout is a helper function to run the inputs with a given timeout.
+func RunIWithTimeout[I any](timeout time.Duration, numRoutines uint, inputs []I, fn RunIFn[I]) (errors []Error[I]) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return runI(ctx, numRoutines, inputs, fn)
+}
+
+func runIO[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn RunIOFn[I, O]) (results []O, errors []Error[I]) {
 	var wg sync.WaitGroup
 
 	// create channels for the inputs, outputs as well as any errors that get generated
@@ -105,6 +139,66 @@ func run[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn Run
 	for out := range oc {
 		results = append(results, out)
 	}
+
+	// aggregate all errors
+	for e := range ec {
+		errors = append(errors, e)
+	}
+
+	return
+}
+
+func runI[I any](ctx context.Context, numRoutines uint, inputs []I, fn RunIFn[I]) (errors []Error[I]) {
+	var wg sync.WaitGroup
+
+	// create channels for the inputs, outputs as well as any errors that get generated
+	ic := make(chan I, numRoutines+1)
+	ec := make(chan Error[I], len(inputs)+1)
+
+	// limit the wait group to the number provided by the caller
+	wg.Add(int(numRoutines))
+
+	// create the routines
+	for i := uint(0); i < numRoutines; i++ {
+		go func() {
+			for {
+				// grab the next input from the channel, stopping if the channel has been closed
+				in, ok := <-ic
+				if !ok {
+					wg.Done()
+
+					return
+				}
+
+				// check that the context has not been canceled or the deadline reached
+				select {
+				case <-ctx.Done():
+					ec <- Error[I]{Input: in, Error: ctx.Err()}
+				default:
+					// execute the actual provided function
+					err := fn(in)
+					if err != nil {
+						// wrap the error to include the input for identification purposes on the caller's side
+						ec <- Error[I]{Input: in, Error: err}
+					}
+				}
+			}
+		}()
+	}
+
+	// pump all the inputs into the input channel so that they can be executed
+	for _, in := range inputs {
+		ic <- in
+	}
+
+	// close the channel to indicate all inputs have been taken
+	close(ic)
+
+	// wait for all jobs to finish
+	wg.Wait()
+
+	// close the output and error channels
+	close(ec)
 
 	// aggregate all errors
 	for e := range ec {
