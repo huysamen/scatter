@@ -18,7 +18,7 @@ type Error[I any] struct {
 type RunIOFn[I any, O any] func(I) (O, error)
 
 // RunIFn specifies the signature for the function being passed into the pool which will get executed for each input
-// anf that produces no output.
+// and that produces no output.
 type RunIFn[I any] func(I) error
 
 // RunIO creates a specified number of goroutines and executes a batch on inputs concurrently as well as aggregates the
