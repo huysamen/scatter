@@ -549,3 +549,60 @@ func TestRunI_WithTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestRunI_WithPanic(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 10; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	errs := RunI[in](2, jobs, func(job in) error {
+		panic("force panic")
+
+		return nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("panic should produce errors, received: %d", len(errs))
+	}
+
+	if len(errs) != 10 {
+		t.Errorf("panic should produce 10 errors, received: %d", len(errs))
+	}
+}
+
+func TestRunIO_WithPanic(t *testing.T) {
+	type in struct {
+		i int
+	}
+
+	type out struct {
+		i int
+		o int
+	}
+
+	var jobs []in
+
+	for i := 0; i < 10; i++ {
+		jobs = append(jobs, in{i})
+	}
+
+	_, errs := RunIO[in, out](2, jobs, func(job in) (out, error) {
+		panic("force panic")
+
+		return out{}, nil
+	})
+
+	if len(errs) == 0 {
+		t.Errorf("panic should produce errors, received: %d", len(errs))
+	}
+
+	if len(errs) != 10 {
+		t.Errorf("panic should produce 10 errors, received: %d", len(errs))
+	}
+}

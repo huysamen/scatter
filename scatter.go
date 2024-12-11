@@ -2,6 +2,8 @@ package scatter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -80,6 +82,8 @@ func RunIWithTimeout[I any](timeout time.Duration, numRoutines uint, inputs []I,
 }
 
 func runIO[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn RunIOFn[I, O]) (results []O, errors []Error[I]) {
+	rfn := tryIO(fn)
+
 	var wg sync.WaitGroup
 
 	// create channels for the inputs, outputs as well as any errors that get generated
@@ -108,7 +112,7 @@ func runIO[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn R
 					ec <- Error[I]{Input: in, Error: ctx.Err()}
 				default:
 					// execute the actual provided function
-					out, err := fn(in)
+					out, err := rfn(in)
 					if err != nil {
 						// wrap the error to include the input for identification purposes on the caller's side
 						ec <- Error[I]{Input: in, Error: err}
@@ -148,7 +152,9 @@ func runIO[I any, O any](ctx context.Context, numRoutines uint, inputs []I, fn R
 	return
 }
 
-func runI[I any](ctx context.Context, numRoutines uint, inputs []I, fn RunIFn[I]) (errors []Error[I]) {
+func runI[I any](ctx context.Context, numRoutines uint, inputs []I, fn RunIFn[I]) (errs []Error[I]) {
+	rfn := tryI(fn)
+
 	var wg sync.WaitGroup
 
 	// create channels for the inputs, outputs as well as any errors that get generated
@@ -176,7 +182,7 @@ func runI[I any](ctx context.Context, numRoutines uint, inputs []I, fn RunIFn[I]
 					ec <- Error[I]{Input: in, Error: ctx.Err()}
 				default:
 					// execute the actual provided function
-					err := fn(in)
+					err := rfn(in)
 					if err != nil {
 						// wrap the error to include the input for identification purposes on the caller's side
 						ec <- Error[I]{Input: in, Error: err}
@@ -200,10 +206,38 @@ func runI[I any](ctx context.Context, numRoutines uint, inputs []I, fn RunIFn[I]
 	// close the output and error channels
 	close(ec)
 
-	// aggregate all errors
+	// aggregate all errs
 	for e := range ec {
-		errors = append(errors, e)
+		errs = append(errs, e)
 	}
 
 	return
+}
+
+func tryI[I any](fn RunIFn[I]) RunIFn[I] {
+	return func(i I) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = errors.New(fmt.Sprintf("%v", r))
+			}
+		}()
+
+		err = fn(i)
+
+		return
+	}
+}
+
+func tryIO[I any, O any](fn RunIOFn[I, O]) RunIOFn[I, O] {
+	return func(i I) (o O, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = errors.New(fmt.Sprintf("%v", r))
+			}
+		}()
+
+		o, err = fn(i)
+
+		return
+	}
 }
